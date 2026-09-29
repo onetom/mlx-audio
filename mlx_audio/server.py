@@ -210,6 +210,29 @@ class SeparationResponse(BaseModel):
 
 # Initialize the ModelProvider
 model_provider = ModelProvider()
+
+def warmup_model(model_name: str) -> None:
+    """Load a model and run one tiny generation so the first real request is warm.
+
+    Pays the one-time costs (weights -> memory, G2P/spacy init, MLX graph
+    compile) at startup instead of during a request. Best-effort: models
+    whose ``generate`` needs more than a text argument are only loaded.
+    """
+    model_name = TTS_MODEL_ALIASES.get(model_name, model_name)
+    print(f"Warming up {model_name}...")
+    start = time.time()
+    model = model_provider.load_model(model_name)
+    generate = getattr(model, "generate", None)
+    if callable(generate):
+        try:
+            for _ in generate(text="Warmup."):
+                pass
+        except TypeError:
+            # Non-TTS model or generate() needs more args; load alone still helps.
+            pass
+    print(f"Warmup done in {time.time() - start:.1f}s")
+
+
 REALTIME_INFERENCE_LOCK = asyncio.Lock()
 INFERENCE_BROKER: Optional[InferenceBroker] = None
 
@@ -2152,6 +2175,17 @@ def main():
             "Overrides $MLX_AUDIO_TTS_MAX_BATCH_SIZE."
         ),
     )
+    parser.add_argument(
+        "--warmup-model",
+        action="append",
+        default=None,
+        metavar="MODEL",
+        help=(
+            "Load MODEL and run one tiny generation before serving, so the first "
+            "request pays no cold-start cost. Repeatable. Aliases like 'kokoro' "
+            "are resolved."
+        ),
+    )
 
     args = parser.parse_args()
     if args.realtime_model:
@@ -2166,6 +2200,9 @@ def main():
         os.environ["MLX_AUDIO_TTS_MAX_BATCH_SIZE"] = str(args.tts_max_batch_size)
 
     setup_cors(app, args.allowed_origins)
+
+    for warmup in args.warmup_model or []:
+        warmup_model(warmup)
 
     client = MLXAudioStudioServer(start_ui=args.start_ui, log_dir=args.log_dir)
     client.start_server(

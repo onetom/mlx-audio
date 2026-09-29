@@ -25,4 +25,6 @@ uv run hf download prince-canuma/Kokoro-82M --include "voices/*"
 # Remove this line if you want to serve other, not-yet-cached models.
 export HF_HUB_OFFLINE=1
 
-exec uv run mlx_audio.server --host 0.0.0.0 --port "$PORT"
+# Warm the Kokoro model (weights + G2P + MLX compile) before serving so the
+# first extension request is fast.
+exec uv run mlx_audio.server --host 0.0.0.0 --port "$PORT" --warmup-model kokoro

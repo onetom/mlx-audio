@@ -214,17 +214,34 @@ class KokoroPipeline:
     Single voice can be requested (e.g. 'af_bella') or multiple voices (e.g. 'af_bella,af_jessica').
     If multiple voices are requested, they are averaged.
     Delimiter is optional and defaults to ','.
+
+    kokoro-fastapi style weighted combos are also supported:
+    'af_sarah(5)+af_nicole(3)+af_sky(2)' mixes the named packs proportionally
+    to their weights (an omitted weight counts as 1).
     """
+
+    _VOICE_PART_RE = re.compile(r"^(?P<name>[^()\s]+?)(?:\((?P<weight>[\d.]+)\))?$")
 
     def load_voice(self, voice: str, delimiter: str = ",") -> mx.array:
         voice = str(voice)  # Ensure string type (handles float from API)
         if voice in self.voices:
             return self.voices[voice]
         logging.debug(f"Loading voice: {voice}")
-        packs = [self.load_single_voice(v) for v in voice.split(delimiter)]
+        packs = []
+        weights = []
+        for token in voice.split(delimiter):
+            for part in token.split("+"):
+                match = self._VOICE_PART_RE.match(part.strip())
+                if not match:
+                    raise ValueError(f"Invalid voice specification: {part!r}")
+                packs.append(self.load_single_voice(match["name"]))
+                weights.append(float(match["weight"]) if match["weight"] else 1.0)
         if len(packs) == 1:
             return packs[0]
-        self.voices[voice] = mx.mean(mx.stack(packs), axis=0)
+        stacked = mx.stack(packs)
+        w = mx.array(weights)
+        w = w.reshape(-1, *([1] * (stacked.ndim - 1)))
+        self.voices[voice] = mx.sum(stacked * w, axis=0) / mx.sum(w)
         return self.voices[voice]
 
     @classmethod

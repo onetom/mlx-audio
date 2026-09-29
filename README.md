@@ -651,6 +651,14 @@ curl -X POST http://localhost:8000/v1/audio/transcriptions \
   -F "model=mlx-community/whisper-large-v3-turbo-asr-fp16"
 ```
 
+**Kokoro-FastAPI compatibility**: clients written for the Kokoro-FastAPI
+server (e.g. browser extensions) are also supported — `model: "kokoro"` maps
+to `mlx-community/Kokoro-82M-bf16`, `GET /v1/test` and `GET /health` serve as
+liveness probes, `GET /v1/audio/voices` without a `model` parameter lists the
+Kokoro voice packs, and weighted voice combos like
+`af_sarah(5)+af_nicole(3)+af_sky(2)` are mixed proportionally to their
+weights.
+
 ## Quantization
 
 Reduce model size and improve performance with quantization using the convert script:

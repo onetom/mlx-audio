@@ -957,9 +957,32 @@ async def remove_model(model_name: str):
         raise HTTPException(status_code=404, detail=f"Model '{model_name}' not found")
 
 
+# Kokoro-FastAPI compatibility: clients written for that API (e.g. browser
+# extensions) hardcode model name "kokoro" and probe GET /v1/test.
+TTS_MODEL_ALIASES = {
+    "kokoro": "mlx-community/Kokoro-82M-bf16",
+}
+
+# Model whose voice packs are listed when /v1/audio/voices is called without
+# a model query parameter (Kokoro-FastAPI behavior).
+DEFAULT_VOICES_MODEL = "mlx-community/Kokoro-82M-bf16"
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
+
+
+@app.get("/v1/test")
+async def v1_test():
+    """Kokoro-FastAPI compatible liveness probe."""
+    return {"status": "ok"}
+
+
 @app.post("/v1/audio/speech")
 async def tts_speech(payload: SpeechRequest, request: Request):
     """Generate speech audio following the OpenAI text-to-speech API."""
+    payload.model = TTS_MODEL_ALIASES.get(payload.model, payload.model)
     if payload.ref_audio and isinstance(payload.ref_audio, str):
         if not os.path.exists(payload.ref_audio):
             raise HTTPException(
@@ -994,9 +1017,13 @@ async def tts_voices(model: Optional[str] = None):
     similar voice-pack-based TTS models). Returns an empty ``data`` list
     for models that don't ship per-voice packs so callers can fall back
     to whatever defaults make sense for that model.
+
+    Without a ``model`` query parameter the default Kokoro model is used,
+    matching Kokoro-FastAPI behavior; ``voices`` carries the plain id list
+    expected by Kokoro-FastAPI clients while ``data`` keeps the original
+    ``{"id", "name"}`` entries.
     """
-    if not model:
-        raise HTTPException(status_code=400, detail="model query parameter is required")
+    model = TTS_MODEL_ALIASES.get(model, model) if model else DEFAULT_VOICES_MODEL
 
     try:
         from huggingface_hub import snapshot_download
@@ -1005,16 +1032,23 @@ async def tts_voices(model: Optional[str] = None):
             repo_id=model, allow_patterns=["voices/*.safetensors"]
         )
     except Exception as e:
-        return {"object": "list", "model": model, "data": [], "error": str(e)}
+        return {
+            "object": "list",
+            "model": model,
+            "voices": [],
+            "data": [],
+            "error": str(e),
+        }
 
     voices_dir = Path(snapshot) / "voices"
     if not voices_dir.is_dir():
-        return {"object": "list", "model": model, "data": []}
+        return {"object": "list", "model": model, "voices": [], "data": []}
 
     voices = sorted(p.stem for p in voices_dir.glob("*.safetensors"))
     return {
         "object": "list",
         "model": model,
+        "voices": voices,
         "data": [{"id": v, "name": v} for v in voices],
     }
 

@@ -349,6 +349,41 @@ class TestKokoroPipeline(unittest.TestCase):
                     self.assertIn("voice1", pipeline.voices)
                     self.assertIn("voice2", pipeline.voices)
 
+    def test_load_voice_weighted_combo(self):
+        """kokoro-fastapi style 'a(w1)+b(w2)' combos mix packs by weight."""
+        from mlx_audio.tts.models.kokoro.pipeline import KokoroPipeline
+
+        with patch.object(KokoroPipeline, "__init__", return_value=None):
+            pipeline = KokoroPipeline.__new__(KokoroPipeline)
+            pipeline.lang_code = "a"
+            pipeline.voices = {}
+            pipeline.repo_id = "mlx-community/kokoro-tts"
+
+            packs = {
+                "voice1": mx.ones((4,)) * 1.0,
+                "voice2": mx.ones((4,)) * 3.0,
+            }
+            with patch.object(
+                pipeline, "load_single_voice", side_effect=lambda v: packs[v]
+            ):
+                # voice1(1) + voice2(3) -> (1*1 + 3*3) / 4 = 2.5
+                result = pipeline.load_voice("voice1(1)+voice2(3)")
+                self.assertTrue(
+                    mx.allclose(result, mx.ones((4,)) * 2.5), msg=str(result)
+                )
+
+                # Equal weights match the plain average; omitted weight counts as 1
+                pipeline.voices = {}
+                result = pipeline.load_voice("voice1+voice2")
+                self.assertTrue(
+                    mx.allclose(result, mx.ones((4,)) * 2.0), msg=str(result)
+                )
+
+                # Malformed specs are rejected
+                pipeline.voices = {}
+                with self.assertRaises(ValueError):
+                    pipeline.load_voice("voice1(abc)+voice2")
+
     def test_tokens_to_ps(self):
         """Test tokens_to_ps method."""
         # Import inside the test method
